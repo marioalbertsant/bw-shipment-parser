@@ -103,14 +103,22 @@ function parseShipment(text: string): ShipmentResponse {
     totalCBM = parseFloat(sumVolMatch[1].replace(",", "."));
   }
 
-  // Consignor – entre "Consignor:" e "Recipient:" (ou outro marcador)
+  // Consignor – entre "Consignor:" e "Recipient:" (ou outro marcador), limpando dims/volume
   let consignor: string | null = null;
   const consignorMatch =
     text.match(/Consignor:\s+(.+?)Recipient:/s) ||
     text.match(/Consignor:\s+(.+?)Ordering entity:/s) ||
     text.match(/Consignor:\s+(.+)/);
   if (consignorMatch) {
-    consignor = consignorMatch[1].trim();
+    let c = consignorMatch[1];
+
+    // remover qualquer bloco do tipo "1,2x1,0x0,45 m ... 1,08 m³" que por acaso apareça aqui
+    c = c.replace(
+      /(\d+[,\.]\d+x\d+[,\.]\d+x\d+[,\.]\d+\s*m[\s\S]*?m³)/,
+      ""
+    );
+
+    consignor = c.trim();
   }
 
   // Recipient – entre "Recipient:" e "Ordering entity:"
@@ -219,7 +227,7 @@ function parseShipmentDetails(text: string): ShipmentRow[] {
 
     rows.push({
       ID: i + 1,
-      Pieces: pieces,
+      Pieces,
       Length: Math.round(parseFloat(dim.Ls.replace(",", ".")) * 100),
       Width: Math.round(parseFloat(dim.Ws.replace(",", ".")) * 100),
       Height: Math.round(parseFloat(dim.Hs.replace(",", ".")) * 100),
