@@ -227,7 +227,7 @@ function parseShipmentDetails(text: string): ShipmentRow[] {
 
     rows.push({
       ID: i + 1,
-      Pieces,
+      Pieces: pieces, // <- aqui estava o erro, estava 'Pieces' sem estar definido
       Length: Math.round(parseFloat(dim.Ls.replace(",", ".")) * 100),
       Width: Math.round(parseFloat(dim.Ws.replace(",", ".")) * 100),
       Height: Math.round(parseFloat(dim.Hs.replace(",", ".")) * 100),
