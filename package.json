@@ -1,0 +1,17 @@
+{
+  "name": "bw-shipment-parser",
+  "version": "1.0.0",
+  "description": "Serverless parser for 4flow/BorgWarner shipment PDFs, deployed on Vercel.",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vercel dev",
+    "start": "vercel dev",
+    "deploy": "vercel deploy --prod"
+  },
+  "dependencies": {
+  },
+  "devDependencies": {
+    "@vercel/node": "^3.0.0",
+    "typescript": "^5.6.0"
+  }
+}
