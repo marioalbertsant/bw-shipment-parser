@@ -11,6 +11,16 @@ type ShipmentRow = {
   Stackable: string;
 };
 
+type ShipmentResponse = {
+  transportOrder: string | null;
+  totalPieces: number;
+  totalGrossWeight: number | null;
+  totalCBM: number | null;
+  consignor: string | null;
+  recipient: string | null;
+  shipmentDetails: ShipmentRow[];
+};
+
 export default async function handler(
   req: VercelRequest,
   res: VercelResponse
@@ -46,8 +56,8 @@ export default async function handler(
       });
     }
 
-    const shipmentDetails = parseShipmentDetails(rawText);
-    return res.status(200).json(shipmentDetails);
+    const shipment = parseShipment(rawText);
+    return res.status(200).json(shipment);
   } catch (err) {
     console.error("Parser error", err);
     return res.status(500).json({ error: "Parser error" });
@@ -62,13 +72,78 @@ export default async function handler(
  *    - último “Air Freight <n>” ou “<n> PAL_” = Pieces
  * - depois de cada LxWxH:
  *    - primeiro “… m³” = volume
+ * - extrai ainda TO, totais, Consignor e Recipient do header
  */
+function parseShipment(text: string): ShipmentResponse {
+  const shipmentDetails = parseShipmentDetails(text);
+
+  // Transport Order
+  let transportOrder: string | null = null;
+  const toMatch = text.match(/Transport Order\s+(\d+)/);
+  if (toMatch) {
+    transportOrder = toMatch[1];
+  } else {
+    const airMatch = text.match(/(\d+)\s+Air Freight/);
+    if (airMatch) {
+      transportOrder = airMatch[1];
+    }
+  }
+
+  // Totais (Sum weight / Sum volume)
+  let totalGrossWeight: number | null = null;
+  let totalCBM: number | null = null;
+
+  const sumWeightMatch = text.match(/Sum weight:\s+(\d+[,\.]\d+)\s*kg/);
+  if (sumWeightMatch) {
+    totalGrossWeight = parseFloat(sumWeightMatch[1].replace(",", "."));
+  }
+
+  const sumVolMatch = text.match(/Sum volume:\s+(\d+[,\.]\d+)\s*m³/);
+  if (sumVolMatch) {
+    totalCBM = parseFloat(sumVolMatch[1].replace(",", "."));
+  }
+
+  // Consignor – entre "Consignor:" e "Recipient:" (ou outro marcador)
+  let consignor: string | null = null;
+  const consignorMatch =
+    text.match(/Consignor:\s+(.+?)Recipient:/s) ||
+    text.match(/Consignor:\s+(.+?)Ordering entity:/s) ||
+    text.match(/Consignor:\s+(.+)/);
+  if (consignorMatch) {
+    consignor = consignorMatch[1].trim();
+  }
+
+  // Recipient – entre "Recipient:" e "Ordering entity:"
+  let recipient: string | null = null;
+  const recipientMatch =
+    text.match(/Recipient:\s+(.+?)Ordering entity:/s) ||
+    text.match(/Recipient:\s+(.+)/);
+  if (recipientMatch) {
+    recipient = recipientMatch[1].trim();
+  }
+
+  // Total pieces calculado pelas linhas
+  const totalPieces = shipmentDetails.reduce(
+    (acc, row) => acc + row.Pieces,
+    0
+  );
+
+  return {
+    transportOrder,
+    totalPieces,
+    totalGrossWeight,
+    totalCBM,
+    consignor,
+    recipient,
+    shipmentDetails
+  };
+}
+
 function parseShipmentDetails(text: string): ShipmentRow[] {
   const rows: ShipmentRow[] = [];
 
-  // 1) Encontrar todas as dimensões LxWxH no texto
+  // Todas as dimensões LxWxH
   const dimRegex = /(\d+[,\.]\d+)x(\d+[,\.]\d+)x(\d+[,\.]\d+)/g;
-
   const matches: {
     index: number;
     length: number;
@@ -88,11 +163,10 @@ function parseShipmentDetails(text: string): ShipmentRow[] {
     });
   }
 
-  // 2) Para cada conjunto de dimensões, olhar para o contexto à volta
+  // Para cada dimensão, olhar para o contexto
   for (let i = 0; i < matches.length; i++) {
     const dim = matches[i];
 
-    // Janela de contexto (ajusta se for preciso mais/menos)
     const WINDOW_BEFORE = 800;
     const WINDOW_AFTER = 200;
 
@@ -100,19 +174,18 @@ function parseShipmentDetails(text: string): ShipmentRow[] {
     const end = Math.min(text.length, dim.index + dim.length + WINDOW_AFTER);
     const window = text.slice(start, end);
 
-    const offset = dim.index - start; // posição das dims dentro da janela
-
+    const offset = dim.index - start;
     const beforeDims = window.slice(0, offset);
     const afterDims = window.slice(offset);
 
-    // 2.1 Volume – primeiro “… m³” depois das dimensões
+    // Volume – primeiro “… m³” depois das dimensões
     let cbm = 0;
     const volMatch = afterDims.match(/(\d+[,\.]\d+)\s*m³/);
     if (volMatch) {
       cbm = parseFloat(volMatch[1].replace(",", "."));
     }
 
-    // 2.2 Peso – último “… kg” antes das dimensões
+    // Peso – último “… kg” antes das dimensões
     let weight = 0;
     const weightMatches = [...beforeDims.matchAll(/(\d+[,\.]\d+)\s*kg/g)];
     if (weightMatches.length > 0) {
@@ -120,9 +193,9 @@ function parseShipmentDetails(text: string): ShipmentRow[] {
       weight = parseFloat(last[1].replace(",", "."));
     }
 
-    // 2.3 Pieces – último marcador de quantidade antes das dimensões:
-    //    - “Air Freight <n>”
-    //    - “<n> PAL_…”
+    // Pieces – último marcador antes das dimensões:
+    //   - “Air Freight <n>”
+    //   - “<n> PAL_”
     let pieces = 1;
     let lastMarkerIndex = -1;
 
