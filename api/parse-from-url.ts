@@ -1,6 +1,6 @@
 // api/parse-from-url.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { parseShipment } from '../lib/parseShipment';
+import { parseShipment } from '../lib/parseShipment.js';
 
 export default async function handler(
   req: VercelRequest,
