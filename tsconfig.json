@@ -1,15 +1,15 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "module": "ESNext",
+    "module": "CommonJS",
     "moduleResolution": "node",
     "esModuleInterop": true,
     "strict": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "lib": ["ES2020", "DOM"],
+    "lib": ["ES2020"],
     "types": ["@vercel/node"]
   },
-  "include": ["api/**/*"]
+  "include": ["api/**/*", "lib/**/*"]
 }
