@@ -1,30 +1,92 @@
-export default async function handler(req: Request): Promise<Response> {
+// api/parse-from-url.ts
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { parseShipment } from '../lib/parseShipment';
+
+function normalizeGoogleDriveUrl(input: string): string {
+  let url = input.trim();
+
+  // Caso já venha um link "uc?export=download&id=..."
+  if (/drive\.google\.com\/uc\?/.test(url)) {
+    return url;
+  }
+
+  // Caso venha um link "file/d/<ID>/view"
+  const fileMatch = url.match(/drive\.google\.com\/file\/d\/([^/]+)/i);
+  if (fileMatch?.[1]) {
+    return `https://drive.google.com/uc?export=download&id=${fileMatch[1]}`;
+  }
+
+  // Caso venha um link "open?id=<ID>"
+  const openMatch = url.match(/[?&]id=([^&]+)/i);
+  if (openMatch?.[1]) {
+    return `https://drive.google.com/uc?export=download&id=${openMatch[1]}`;
+  }
+
+  return url;
+}
+
+export default async function handler(
+  req: VercelRequest,
+  res: VercelResponse
+): Promise<void> {
   try {
-    const { searchParams } = new URL(req.url);
-    const fileUrl = searchParams.get("fileUrl");
-    if (!fileUrl) {
-      return new Response(JSON.stringify({ error: "Missing fileUrl parameter" }), { status: 400 });
+    if (req.method !== 'GET') {
+      res.status(405).json({ error: 'Method not allowed. Use GET.' });
+      return;
     }
 
-    const fileResponse = await fetch(fileUrl);
-    if (!fileResponse.ok) {
-      return new Response(
-        JSON.stringify({ error: "Failed to download file", status: fileResponse.status }),
-        { status: 502 }
-      );
+    const fileUrlParam = req.query.fileUrl;
+    const fileUrlRaw = Array.isArray(fileUrlParam) ? fileUrlParam[0] : fileUrlParam;
+
+    if (!fileUrlRaw || typeof fileUrlRaw !== 'string') {
+      res.status(400).json({
+        error: 'Missing "fileUrl" query parameter.'
+      });
+      return;
     }
 
-    const text = await fileResponse.text();
+    const fileUrl = normalizeGoogleDriveUrl(fileUrlRaw);
 
-    // Aqui reutilizas a tua função existente
+    const response = await fetch(fileUrl, {
+      method: 'GET',
+      redirect: 'follow',
+      headers: {
+        'User-Agent': 'bw-shipment-parser/1.0',
+        'Accept': 'text/plain,text/html;q=0.9,*/*;q=0.8'
+      }
+    });
+
+    if (!response.ok) {
+      res.status(502).json({
+        error: 'Failed to download file from fileUrl.',
+        status: response.status,
+        statusText: response.statusText,
+        fileUrl
+      });
+      return;
+    }
+
+    const text = await response.text();
+
+    if (!text || !text.trim()) {
+      res.status(422).json({
+        error: 'Downloaded file is empty.',
+        fileUrl
+      });
+      return;
+    }
+
     const result = parseShipment(text);
 
-    return new Response(JSON.stringify(result), {
-      status: 200,
-      headers: { "Content-Type": "application/json; charset=utf-8" }
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, must-revalidate, max-age=0');
+    res.status(200).json(result);
+  } catch (err: any) {
+    console.error('Error in /api/parse-from-url:', err);
+
+    res.status(500).json({
+      error: 'Internal server error.',
+      message: err?.message ?? 'Unknown error'
     });
-  } catch (err) {
-    console.error(err);
-    return new Response(JSON.stringify({ error: "Internal error" }), { status: 500 });
   }
 }
