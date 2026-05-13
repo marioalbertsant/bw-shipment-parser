@@ -1,6 +1,4 @@
-// lib/parseShipment.ts
-
-export type ShipmentDetail = {
+export interface ShipmentDetail {
   ID: number;
   Pieces: number;
   Length: number;
@@ -8,10 +6,10 @@ export type ShipmentDetail = {
   Height: number;
   Weight: number;
   CBM: number;
-  Stackable: string;
-};
+  Stackable: boolean;
+}
 
-export type ParseResult = {
+export interface ParsedShipment {
   transportOrder: string;
   totalPieces: number;
   totalGrossWeight: number;
@@ -19,88 +17,125 @@ export type ParseResult = {
   consignor: string;
   recipient: string;
   shipmentDetails: ShipmentDetail[];
-};
-
-function parseNum(s: string): number {
-  if (!s) return 0;
-  const cleaned = s.trim().replace(/\./g, '').replace(',', '.');
-  return parseFloat(cleaned) || 0;
 }
 
-export function parseShipment(text: string): ParseResult {
-  const normalized = text.replace(/[^\S\n]+/g, ' ').replace(/\n{3,}/g, '\n\n');
+export function parseShipment(text: string): ParsedShipment {
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
 
-  // ── Transport Order ──────────────────────────────────────────────
-  let transportOrder = '';
-  const toMatch = normalized.match(/\b(1\d{7})\b/);
-  if (toMatch) transportOrder = toMatch[1];
+  // --- Helper ---
+  const findValue = (label: string): string => {
+    for (const line of lines) {
+      const idx = line.indexOf(label);
+      if (idx !== -1) {
+        const after = line.slice(idx + label.length).trim();
+        if (after) return after.split(/\s{2,}|\t/)[0].trim();
+      }
+    }
+    return "";
+  };
 
-  // ── Sum totals ───────────────────────────────────────────────────
-  let totalPieces = 0;
-  let totalGrossWeight = 0;
-  let totalCBM = 0;
+  const parseNum = (val: string): number => {
+    const cleaned = val.replace(/[^\d.,]/g, "").replace(",", ".");
+    return parseFloat(cleaned) || 0;
+  };
 
-  const spM = normalized.match(/Sum packaging:\s*([\d.,]+)/i);
-  if (spM) totalPieces = Math.round(parseNum(spM[1]));
+  // --- Header fields ---
+  const transportOrder =
+    findValue("Transport Order:") ||
+    findValue("Order No:") ||
+    findValue("Transport Order No") ||
+    findValue("Shipment No") ||
+    findValue("Ref:");
 
-  const swM = normalized.match(/Sum weight:\s*([\d.,]+)\s*kg/i);
-  if (swM) totalGrossWeight = parseNum(swM[1]);
+  const consignor =
+    findValue("Consignor:") ||
+    findValue("Shipper:") ||
+    findValue("Sender:");
 
-  const svM = normalized.match(/Sum volume:\s*([\d.,]+)\s*m/i);
-  if (svM) totalCBM = parseNum(svM[1]);
+  const recipient =
+    findValue("Recipient:") ||
+    findValue("Consignee:") ||
+    findValue("Receiver:");
 
-  // ── Consignor ────────────────────────────────────────────────────
-  let consignor = '';
-  const cM = normalized.match(/Consignor:\s+([\s\S]+?)(?=\(ID:)/i);
-  if (cM) consignor = cM[1].trim().replace(/;$/, '').trim();
+  const totalPiecesRaw =
+    findValue("Total Pieces:") ||
+    findValue("Total Pkgs:") ||
+    findValue("No. of Pieces:");
 
-  // ── Recipient ────────────────────────────────────────────────────
-  let recipient = '';
-  const rM = normalized.match(/Recipient:\s+([\s\S]+?)(?=\(ID:)/i);
-  if (rM) recipient = rM[1].trim().replace(/;$/, '').trim();
+  const totalWeightRaw =
+    findValue("Total Gross Weight:") ||
+    findValue("Total Weight:") ||
+    findValue("Gross Weight:");
 
-  // ── Shipment Details (HU blocks) ─────────────────────────────────
-  const shipmentDetails: ShipmentDetail[] = [];
-  let huId = 0;
+  const totalCBMRaw =
+    findValue("Total CBM:") ||
+    findValue("CBM:") ||
+    findValue("Volume:");
 
-  // Primary: match known HU type keywords with qty (1-3 digits), weight, dims, stackability, CBM
-  const huPattern =
-    /(?<!\d)(\d{1,3})\s+(PAL_EURO?|PAL_INDU|MISC handling unit)[\s\S]{0,400}?(\d+[,.]?\d*)\s*kg[\s\S]{0,400}?(\d+[,.]?\d*)\s*x\s*(\d+[,.]?\d*)\s*x\s*(\d+[,.]?\d*)\s*m\s+(\d{1,3}|999)\s+([\d.,]+)\s*m³/gi;
+  const totalPieces = parseNum(totalPiecesRaw);
+  const totalGrossWeight = parseNum(totalWeightRaw);
+  const totalCBM = parseNum(totalCBMRaw);
 
-  let hm: RegExpExecArray | null;
-  while ((hm = huPattern.exec(normalized)) !== null) {
-    huId++;
-    shipmentDetails.push({
-      ID: huId,
-      Pieces: parseInt(hm[1], 10),
-      Length: parseNum(hm[4]),
-      Width: parseNum(hm[5]),
-      Height: parseNum(hm[6]),
-      Weight: parseNum(hm[3]),
-      CBM: parseNum(hm[8]),
-      Stackable: hm[7],
-    });
+  // --- Shipment detail rows ---
+  // Detect header row containing "Pieces" or "Pcs" and "Length"
+  let headerIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i].toLowerCase();
+    if (
+      (l.includes("pieces") || l.includes("pcs")) &&
+      (l.includes("length") || l.includes("l(m)")) &&
+      (l.includes("weight") || l.includes("kg"))
+    ) {
+      headerIdx = i;
+      break;
+    }
   }
 
-  // Fallback: dim-only scan for unusual HU type names
-  if (shipmentDetails.length === 0) {
-    const dimPattern =
-      /(\d+[,.]?\d*)\s*x\s*(\d+[,.]?\d*)\s*x\s*(\d+[,.]?\d*)\s*m\s+(\d{1,3}|999)\s+([\d.,]+)\s*m³/gi;
-    let dm: RegExpExecArray | null;
-    while ((dm = dimPattern.exec(normalized)) !== null) {
-      huId++;
-      const before = normalized.slice(Math.max(0, dm.index - 300), dm.index);
-      const wM = before.match(/(\d+[,.]?\d*)\s*kg\s*$/) || before.match(/(\d+[,.]?\d*)\s*kg/);
-      const qM = before.match(/(?<!\d)(\d{1,3})\s+(?:PAL|MISC|Cardboard|Euro|Industrial)/i);
+  const shipmentDetails: ShipmentDetail[] = [];
+
+  if (headerIdx !== -1) {
+    let id = 1;
+    for (let i = headerIdx + 1; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Stop if summary/total row encountered
+      if (/total|totals|subtotal/i.test(line)) break;
+
+      // Split by 2+ spaces or tabs
+      const cols = line.split(/\s{2,}|\t/).map((c) => c.trim()).filter((c) => c !== "");
+
+      // Expect at least 7 columns: Pieces, L, W, H, Weight, CBM, Stackable
+      if (cols.length < 6) continue;
+
+      // Detect if first col is a row number — skip it
+      let offset = 0;
+      if (/^\d+$/.test(cols[0]) && cols.length >= 7) offset = 0;
+
+      const pieces    = parseNum(cols[offset]);
+      const length    = parseNum(cols[offset + 1]);
+      const width     = parseNum(cols[offset + 2]);
+      const height    = parseNum(cols[offset + 3]);
+      const weight    = parseNum(cols[offset + 4]);
+      const cbm       = parseNum(cols[offset + 5]);
+      const stackRaw  = cols[offset + 6] ?? "";
+
+      // Skip rows that don't look like data
+      if (pieces === 0 && length === 0) continue;
+
+      const stackable = stackRaw.trim() === "999";
+
       shipmentDetails.push({
-        ID: huId,
-        Pieces: qM ? parseInt(qM[1], 10) : 1,
-        Length: parseNum(dm[1]),
-        Width: parseNum(dm[2]),
-        Height: parseNum(dm[3]),
-        Weight: wM ? parseNum(wM[1]) : 0,
-        CBM: parseNum(dm[5]),
-        Stackable: dm[4],
+        ID: id++,
+        Pieces: pieces,
+        Length: length,
+        Width: width,
+        Height: height,
+        Weight: weight,
+        CBM: cbm,
+        Stackable: stackable,
       });
     }
   }
@@ -115,3 +150,4 @@ export function parseShipment(text: string): ParseResult {
     shipmentDetails,
   };
 }
+
