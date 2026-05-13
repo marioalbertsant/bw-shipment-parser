@@ -3,20 +3,17 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { parseShipment } from '../lib/parseShipment';
 
 function normalizeGoogleDriveUrl(input: string): string {
-  let url = input.trim();
+  const url = input.trim();
 
-  // Caso já venha um link "uc?export=download&id=..."
   if (/drive\.google\.com\/uc\?/.test(url)) {
     return url;
   }
 
-  // Caso venha um link "file/d/<ID>/view"
   const fileMatch = url.match(/drive\.google\.com\/file\/d\/([^/]+)/i);
   if (fileMatch?.[1]) {
     return `https://drive.google.com/uc?export=download&id=${fileMatch[1]}`;
   }
 
-  // Caso venha um link "open?id=<ID>"
   const openMatch = url.match(/[?&]id=([^&]+)/i);
   if (openMatch?.[1]) {
     return `https://drive.google.com/uc?export=download&id=${openMatch[1]}`;
@@ -52,7 +49,7 @@ export default async function handler(
       redirect: 'follow',
       headers: {
         'User-Agent': 'bw-shipment-parser/1.0',
-        'Accept': 'text/plain,text/html;q=0.9,*/*;q=0.8'
+        Accept: 'text/plain,text/html;q=0.9,*/*;q=0.8'
       }
     });
 
@@ -83,7 +80,6 @@ export default async function handler(
     res.status(200).json(result);
   } catch (err: any) {
     console.error('Error in /api/parse-from-url:', err);
-
     res.status(500).json({
       error: 'Internal server error.',
       message: err?.message ?? 'Unknown error'
